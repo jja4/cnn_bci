@@ -10,6 +10,7 @@ from braindecode.experiments.loggers import Printer
 from braindecode.datautil.signal_target import SignalAndTarget
 from braindecode.datautil.signalproc import lowpass_cnt, highpass_cnt, exponential_running_standardize
 from braindecode.models.shallow_fbcsp import ShallowFBCSPNet
+from braindecode.models.deep4 import Deep4Net
 from braindecode.models.util import to_dense_prediction_model
 from braindecode.datautil.splitters import split_into_two_sets, split_into_train_test
 from braindecode.torch_ext.util import set_random_seeds
@@ -29,33 +30,30 @@ import glob
 
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-default_path = '/home/seulki/PycharmProjects/data/Open_BCI_EEG/'
+default_path = '/home/seulki/PycharmProjects/data/Open_BCI_EEG/62channel_0527/' #62 channel datsets
 #default_path = '/home/seulki/PycharmProjects/data/Open_BCI_EEG_hanyang/'
+#default_path ='/home/joel/PycharmProjects/DeepBCI/data/Only_LR/' #88 and 84 channel datasets
 save_path = '/home/joel/PycharmProjects/DeepBCI/code/BCImodel.pt'
-
-# Enable logging
-importlib.reload(logging)  # see https://stackoverflow.com/a/21475297/1469195
-logging.basicConfig(format='%(asctime)s %(levelname)s : %(message)s',
-                     level=logging.INFO, stream=sys.stdout)
-log = logging.getLogger()
-log.setLevel('INFO')
 
 filename = default_path+'*labels.mat'
 subj_files = glob.glob(filename)
 
 num_epochs = 30
+#extract subject numbers from filenames
 regex = re.compile(r'\d+')
 subjs = [int(x) for i in range(0,len(subj_files)) for x in regex.findall(subj_files[i])]
 subjs.sort()
 
+#load list of subjects that only did left/right imagined movements
 subjs_path = '/home/joel/PycharmProjects/DeepBCI/results/LR_subjs.tar'
 subjs = th.load(subjs_path)
 
 #save important numbers
 Accuracies = np.zeros((len(subjs),5))
+noFT_Accuracies = np.zeros((len(subjs),5))
 Losses = np.zeros((len(subjs),len(subjs),num_epochs+1))
 
-var_save_path = '/home/joel/PycharmProjects/DeepBCI/results/Global_resultsCV_62chan.tar'  # type: str
+var_save_path = '/home/joel/PycharmProjects/DeepBCI/results/Global_resultsCV_62chan_Deep.tar'  # type: str
 
 #measures = th.load(var_save_path)
 #Accuracies = measures['Acc']
@@ -77,12 +75,15 @@ for test_subj in subjs[idx:]:
 
     n_classes = 2
     in_chans = 62  # train_set.X.shape[1]  # number of channels = 128
-    input_time_length = 650  # length of time of each epoch/trial = 4000
+    input_time_length = 500  # length of time of each epoch/trial = 4000
 
-    model = ShallowFBCSPNet(in_chans=in_chans, n_classes=n_classes,
-                            input_time_length=input_time_length,
-                            final_conv_length=15, )  # .create_network() # 'auto')
+    #model = ShallowFBCSPNet(in_chans=in_chans, n_classes=n_classes,
+    #                        input_time_length=input_time_length,
+    #                        final_conv_length=15, )  # .create_network() # 'auto')
 
+    model = Deep4Net(in_chans=in_chans, n_classes=n_classes,
+                     input_time_length=input_time_length,
+                     final_conv_length='auto', )
     if cuda:
         model.cuda()
     print('cuda: ' + str(cuda))
@@ -135,7 +136,7 @@ for test_subj in subjs[idx:]:
             print('data prepared')
 
 
-            optimizer = AdamW(model.parameters(), lr= 0.01, weight_decay= 0.5*0.001) 
+            optimizer = AdamW(model.parameters(), lr= 0.01, weight_decay= 0.1*0.001)
             print('optimizer created')
 
             #if model_created:
@@ -154,7 +155,7 @@ for test_subj in subjs[idx:]:
             Losses[idx,sub_idx,:] = model.epochs_df['train_loss']
 
             #save model
-            # th.save(model.network.state_dict(), save_path)
+            th.save(model.network.state_dict(), save_path)
             sub_idx += 1
 
     ## Test
@@ -189,18 +190,23 @@ for test_subj in subjs[idx:]:
    # X = np.take(X, indices[0], axis=0)
    # y = np.take(y, indices[0])
 
-
     for CV in np.arange(0, 5):
         print('Subject No.{} CV {}'.format(test_subj, CV))
-        # model.network.load_state_dict(th.load(save_path))
-        model.network.train()
+        model.network.load_state_dict(th.load(save_path))
+        model.network.eval()
         # 5th phase: Model evaluation (test)
-        train_set = SignalAndTarget(X, y=y)
+        test_set = SignalAndTarget(X, y=y)
+        no_fine_tuning_score = model.evaluate(test_set.X, test_set.y)
+        noFT_Accuracy = 1 - no_fine_tuning_score['misclass']
+        noFT_Accuracies[idx, CV] = noFT_Accuracy
+
+
+        model.network.train()
         # make different training sets, needed to switch order of train and test so test was the larger one
-        train_set, test_set = split_into_train_test(train_set, n_folds = 5, i_test_fold = CV, rng=None)
+        test_set, train_set = split_into_train_test(test_set, n_folds = 5, i_test_fold = CV, rng=None)
         #train_set, test_set = split_into_two_sets(train_set, first_set_fraction=0.2)
 
-        optimizer = AdamW(model.parameters(), lr=0.01, weight_decay=0.5 * 0.001)  # weight_decay=0.1*0.001
+        optimizer = AdamW(model.parameters(), lr=0.01, weight_decay=0.1*0.001)  # weight_decay=0.1*0.001
         print('optimizer created')
 
         model.compile(loss=F.nll_loss, optimizer=optimizer, iterator_seed=1, cropped=True)
@@ -224,7 +230,7 @@ for test_subj in subjs[idx:]:
         Accuracies[idx,CV] = Accuracy
         print('yay')
 
-        th.save({'Acc':Accuracies,'Losses': Losses}, var_save_path)
-    print('Overall Acc Subject {}: {}'.format(test_subj, np.mean(Accuracies[idx])))
+        th.save({'Acc':Accuracies,'noFT_Acc':noFT_Accuracies,'Losses': Losses}, var_save_path)
+    print('Overall Acc Subject {}: {},{}'.format(test_subj, np.mean(Accuracies[idx]), np.mean(noFT_Accuracies[idx])))
     idx += 1
 print('last_step')

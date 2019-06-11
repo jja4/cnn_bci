@@ -10,6 +10,7 @@ from braindecode.experiments.loggers import Printer
 from braindecode.datautil.signal_target import SignalAndTarget
 from braindecode.datautil.signalproc import lowpass_cnt, highpass_cnt, exponential_running_standardize
 from braindecode.models.shallow_fbcsp import ShallowFBCSPNet
+from braindecode.models.deep4 import Deep4Net
 from braindecode.models.util import to_dense_prediction_model
 from braindecode.datautil.splitters import split_into_two_sets, split_into_train_test
 from braindecode.torch_ext.util import set_random_seeds
@@ -29,33 +30,28 @@ import glob
 
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-#default_path = '/home/seulki/PycharmProjects/data/Open_BCI_EEG/'
+default_path =  '/home/seulki/PycharmProjects/data/Open_BCI_EEG/62channel_0527/' #62 channel datsets
 #default_path = '/home/seulki/PycharmProjects/data/Open_BCI_EEG_hanyang/'
-default_path ='/home/joel/PycharmProjects/DeepBCI/data/Only_LR/'
+#default_path ='/home/joel/PycharmProjects/DeepBCI/data/Only_LR/' #88 and 84 channel datsets
 save_path = '/home/joel/PycharmProjects/DeepBCI/code/BCImodel.pt'
 
-# Enable logging
-importlib.reload(logging)  # see https://stackoverflow.com/a/21475297/1469195
-logging.basicConfig(format='%(asctime)s %(levelname)s : %(message)s',
-                     level=logging.INFO, stream=sys.stdout)
-log = logging.getLogger()
-log.setLevel('INFO')
 
 filename = default_path+'*labels.mat'
 subj_files = glob.glob(filename)
 
 num_epochs = 30
-regex = re.compile(r'\d+')
+#regex = re.compile(r'\d+')
 #subjs = [int(x) for i in range(0,len(subj_files)) for x in regex.findall(subj_files[i])]
 #subjs.sort()
 
+#load list of subjects that have only left and right imagined movements
 subjs_path = '/home/joel/PycharmProjects/DeepBCI/results/LR_subjs.tar'
 subjs = th.load(subjs_path)
-
+print(subjs)
 Accuracies = np.zeros((len(subjs),5))
 Losses = np.zeros((len(subjs),num_epochs+1))
 
-var_save_path = '/home/joel/PycharmProjects/DeepBCI/results/Individual_resultsCV_8884chan_.tar'  # type: str
+var_save_path = '/home/joel/PycharmProjects/DeepBCI/results/Individual_resultsCV_62channel_0604.tar'  # type: str
 #measures = th.load(var_save_path)
 #Accuracies = measures['Acc']
 #Losses = measures['Losses']
@@ -109,16 +105,20 @@ for i in subjs[:]:
 
             n_classes = 2
             in_chans = train_set.X.shape[1]  # number of channels = 128
-            input_time_length = 350  # length of time of each epoch/trial = 4000
+            input_time_length = 500  # length of time of each epoch/trial = 4000
 
             model = ShallowFBCSPNet(in_chans=in_chans, n_classes=n_classes,
                                     input_time_length=input_time_length,
-                                    final_conv_length=10, )  # .create_network() # 'auto')
+                                    final_conv_length='auto', )
+            #model = Deep4Net(in_chans=in_chans, n_classes=n_classes,
+            #                        input_time_length=input_time_length,
+            #                        final_conv_length='auto', )
+
 
             if cuda:
                 model.cuda()
-            print('cuda: ' + str(cuda))
-            optimizer = AdamW(model.parameters(), lr=0.01, weight_decay=0)  # weight_decay=0.1*0.001
+            print('cuda: ' + str(cuda) + ', num chans: ' + str(in_chans))
+            optimizer = AdamW(model.parameters(), lr=0.01, weight_decay=0.1*0.001)  # weight_decay=0.1*0.001
 
             model.compile(loss=F.nll_loss, optimizer=optimizer, iterator_seed=1, cropped=True)
             print('compiled')
