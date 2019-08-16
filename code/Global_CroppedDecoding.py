@@ -30,10 +30,11 @@ import glob
 
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-default_path = '/home/seulki/PycharmProjects/data/Open_BCI_EEG/62channel_0527/' #62 channel datsets
+#default_path = '/home/seulki/PycharmProjects/data/Open_BCI_EEG/30channel_0529/' #62 channel datsets
+default_path = '/home/seulki/PycharmProjects/data/Open_BCI_EEG/62channel_0711/'
 #default_path = '/home/seulki/PycharmProjects/data/Open_BCI_EEG_hanyang/'
 #default_path ='/home/joel/PycharmProjects/DeepBCI/data/Only_LR/' #88 and 84 channel datasets
-save_path = '/home/joel/PycharmProjects/DeepBCI/code/BCImodel.pt'
+save_path = '/home/joel/PycharmProjects/DeepBCI/code/Global_BCImodel_80percent_2class.pt'
 
 filename = default_path+'*labels.mat'
 subj_files = glob.glob(filename)
@@ -49,11 +50,15 @@ subjs_path = '/home/joel/PycharmProjects/DeepBCI/results/LR_subjs.tar'
 subjs = th.load(subjs_path)
 
 #save important numbers
-Accuracies = np.zeros((len(subjs),5))
-noFT_Accuracies = np.zeros((len(subjs),5))
-Losses = np.zeros((len(subjs),len(subjs),num_epochs+1))
+num_folds = 5
 
-var_save_path = '/home/joel/PycharmProjects/DeepBCI/results/Global_resultsCV_62chan_Deep.tar'  # type: str
+Accuracies = np.zeros((len(subjs),num_folds))
+noFT_Accuracies = np.zeros((len(subjs),num_folds))
+Losses = np.zeros((len(subjs),num_epochs+1))
+Train_Losses = np.zeros((len(subjs), num_epochs + 1))
+FT_Losses = np.zeros((len(subjs), num_epochs + 1))
+
+var_save_path = '/home/joel/PycharmProjects/DeepBCI/results/Global_results_62chan_80percent_100time.tar'  # type: str
 
 #measures = th.load(var_save_path)
 #Accuracies = measures['Acc']
@@ -62,7 +67,7 @@ var_save_path = '/home/joel/PycharmProjects/DeepBCI/results/Global_resultsCV_62c
 
 
 # option to start training at a specific index
-idx =0
+idx =5
 ### Training loop #############################################################
 for test_subj in subjs[idx:]:
     print('CROSS VALIDATION on Subject No.{}'.format(test_subj))
@@ -75,15 +80,15 @@ for test_subj in subjs[idx:]:
 
     n_classes = 2
     in_chans = 62  # train_set.X.shape[1]  # number of channels = 128
-    input_time_length = 500  # length of time of each epoch/trial = 4000
+    input_time_length = 100  # length of time of each epoch/trial = 4000
 
-    #model = ShallowFBCSPNet(in_chans=in_chans, n_classes=n_classes,
-    #                        input_time_length=input_time_length,
-    #                        final_conv_length=15, )  # .create_network() # 'auto')
+    model = ShallowFBCSPNet(in_chans=in_chans, n_classes=n_classes,
+                            input_time_length=input_time_length,
+                            final_conv_length='auto', )  # .create_network() # 'auto')
 
-    model = Deep4Net(in_chans=in_chans, n_classes=n_classes,
-                     input_time_length=input_time_length,
-                     final_conv_length='auto', )
+    #model = Deep4Net(in_chans=in_chans, n_classes=n_classes,
+    #                 input_time_length=input_time_length,
+    #                 final_conv_length='auto', )
     if cuda:
         model.cuda()
     print('cuda: ' + str(cuda))
@@ -102,11 +107,11 @@ for test_subj in subjs[idx:]:
                 temp_data = FeatVect[ii, :, :]
                 temp_data = temp_data.transpose()
                 # 2. Lowpass filtering
-                lowpassed_data = lowpass_cnt(temp_data, 100, 200, filt_order=5)
+                lowpassed_data = lowpass_cnt(temp_data, 100, 200, filt_order=3)
                 # 3. Highpass filtering
                 bandpassed_data = highpass_cnt(lowpassed_data, 4, 200, filt_order=3)
                 # 4. Exponential running standardization
-                ExpRunStand_data = exponential_running_standardize(bandpassed_data, factor_new=0.01, init_block_size=None,
+                ExpRunStand_data = exponential_running_standardize(bandpassed_data, factor_new=0.001, init_block_size=None,
                                                                    eps=0.0001)
                 # 5. Renewal preprocessed data
                 ExpRunStand_data = ExpRunStand_data.transpose()
@@ -152,7 +157,7 @@ for test_subj in subjs[idx:]:
                     input_time_length=input_time_length) 
             print(model.epochs_df)
 
-            Losses[idx,sub_idx,:] = model.epochs_df['train_loss']
+            Train_Losses[sub_idx,:] = model.epochs_df['train_loss']
 
             #save model
             th.save(model.network.state_dict(), save_path)
@@ -170,11 +175,11 @@ for test_subj in subjs[idx:]:
         temp_data = FeatVect[ii, :, :]
         temp_data = temp_data.transpose()
         # 2. Lowpass filtering
-        lowpassed_data = lowpass_cnt(temp_data, 100, 200, filt_order=5)
+        lowpassed_data = lowpass_cnt(temp_data, 100, 200, filt_order=3)
         # 3. Highpass filtering
         bandpassed_data = highpass_cnt(lowpassed_data, 4, 200, filt_order=3)
         # 4. Exponential running standardization
-        ExpRunStand_data = exponential_running_standardize(bandpassed_data, factor_new=0.01, init_block_size=None,
+        ExpRunStand_data = exponential_running_standardize(bandpassed_data, factor_new=0.001, init_block_size=None,
                                                            eps=0.0001)
         # 5. Renewal preprocessed data
         ExpRunStand_data = ExpRunStand_data.transpose()
@@ -190,7 +195,7 @@ for test_subj in subjs[idx:]:
    # X = np.take(X, indices[0], axis=0)
    # y = np.take(y, indices[0])
 
-    for CV in np.arange(0, 5):
+    for CV in np.arange(0, num_folds):
         print('Subject No.{} CV {}'.format(test_subj, CV))
         model.network.load_state_dict(th.load(save_path))
         model.network.eval()
@@ -203,7 +208,10 @@ for test_subj in subjs[idx:]:
 
         model.network.train()
         # make different training sets, needed to switch order of train and test so test was the larger one
-        test_set, train_set = split_into_train_test(test_set, n_folds = 5, i_test_fold = CV, rng=None)
+        # 80% training, 20% test
+        train_set, test_set = split_into_train_test(test_set, n_folds=num_folds, i_test_fold=CV, rng=None)
+        # 5% training, 95% test
+        #test_set, train_set = split_into_train_test(test_set, n_folds = 20, i_test_fold = CV, rng=None)
         #train_set, test_set = split_into_two_sets(train_set, first_set_fraction=0.2)
 
         optimizer = AdamW(model.parameters(), lr=0.01, weight_decay=0.1*0.001)  # weight_decay=0.1*0.001
@@ -227,10 +235,11 @@ for test_subj in subjs[idx:]:
         print('all done')
 
         # save key values
+        FT_Losses[idx, :] = model.epochs_df['train_loss']
         Accuracies[idx,CV] = Accuracy
         print('yay')
 
-        th.save({'Acc':Accuracies,'noFT_Acc':noFT_Accuracies,'Losses': Losses}, var_save_path)
+        th.save({'Acc': Accuracies, 'noFT_Acc': noFT_Accuracies, 'Train_Losses': Train_Losses, 'FT_Losses': FT_Losses}, var_save_path)
     print('Overall Acc Subject {}: {},{}'.format(test_subj, np.mean(Accuracies[idx]), np.mean(noFT_Accuracies[idx])))
     idx += 1
 print('last_step')

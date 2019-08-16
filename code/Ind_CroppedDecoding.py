@@ -30,10 +30,11 @@ import glob
 
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-default_path =  '/home/seulki/PycharmProjects/data/Open_BCI_EEG/62channel_0527/' #62 channel datsets
+#default_path = '/home/seulki/PycharmProjects/data/Open_BCI_EEG/30channel_0529/'  #62 channel datsets
+default_path = '/home/seulki/PycharmProjects/data/Open_BCI_EEG/62channel_0527/'
 #default_path = '/home/seulki/PycharmProjects/data/Open_BCI_EEG_hanyang/'
 #default_path ='/home/joel/PycharmProjects/DeepBCI/data/Only_LR/' #88 and 84 channel datsets
-save_path = '/home/joel/PycharmProjects/DeepBCI/code/BCImodel.pt'
+save_path = '/home/joel/PycharmProjects/DeepBCI/code/Ind_BCImodel_doublebigkernel.pt'
 
 
 filename = default_path+'*labels.mat'
@@ -48,10 +49,12 @@ num_epochs = 30
 subjs_path = '/home/joel/PycharmProjects/DeepBCI/results/LR_subjs.tar'
 subjs = th.load(subjs_path)
 print(subjs)
-Accuracies = np.zeros((len(subjs),5))
+num_folds = 5
+
+Accuracies = np.zeros((len(subjs),num_folds))
 Losses = np.zeros((len(subjs),num_epochs+1))
 
-var_save_path = '/home/joel/PycharmProjects/DeepBCI/results/Individual_resultsCV_62channel_0604.tar'  # type: str
+var_save_path = '/home/joel/PycharmProjects/DeepBCI/results/Ind_results_62chan_doublemediumkernel.tar'  # type: str
 #measures = th.load(var_save_path)
 #Accuracies = measures['Acc']
 #Losses = measures['Losses']
@@ -72,16 +75,16 @@ for i in subjs[:]:
             temp_data = FeatVect[ii, :, :]
             temp_data = temp_data.transpose()
             # 2. Lowpass filtering
-            lowpassed_data = lowpass_cnt(temp_data, 100, 200, filt_order=5)
+            #lowpassed_data = lowpass_cnt(temp_data, 100, 200, filt_order=3)
             # 3. Highpass filtering
-            bandpassed_data = highpass_cnt(lowpassed_data, 4, 200, filt_order=3)
+            #bandpassed_data = highpass_cnt(lowpassed_data, 4, 200, filt_order=3)
             # 4. Exponential running standardization
-            ExpRunStand_data = exponential_running_standardize(bandpassed_data, factor_new=0.01, init_block_size=None,
-                                                               eps=0.0001)
+            ExpRunStand_data = exponential_running_standardize(temp_data, factor_new=0.001, init_block_size=None,
+                                                               eps=0.0001) #used to be bandpassed_data
             # 5. Renewal preprocessed data
             ExpRunStand_data = ExpRunStand_data.transpose()
             FeatVect[ii, :, :] = ExpRunStand_data
-            del temp_data, lowpassed_data, bandpassed_data, ExpRunStand_data
+            #del temp_data, lowpassed_data, bandpassed_data, ExpRunStand_data
 
         print('preprocessed data')
         # 2nd phase: Convert data to Braindecode format
@@ -93,19 +96,21 @@ for i in subjs[:]:
         y = (y_labels[:,0] - 0).astype(np.int64)
 
 
-        for CV in np.arange(0, 5):
+        for CV in np.arange(0, num_folds):
             print('Subject No.{} CV {}'.format(i, CV))
             # 5th phase: Model evaluation (test)
             train_set = SignalAndTarget(X, y=y)
-            # make different training sets, needed to switch order of train and test so test was the larger one
-            train_set, test_set = split_into_train_test(train_set, n_folds = 5, i_test_fold = CV, rng=None)
+            # 80% training, 20% test
+            train_set, test_set = split_into_train_test(train_set, n_folds = num_folds, i_test_fold = CV, rng=RandomState((2019, 28, 6))) #RandomState((2019, 28, 6))
+            # 5% training, 95% test
+            #test_set, train_set = split_into_train_test(train_set, n_folds = num_folds, i_test_fold = CV, rng=None)
 
             cuda = th.cuda.is_available()
-            set_random_seeds(seed=20170629, cuda=cuda)
+            set_random_seeds(seed=20190628, cuda=cuda)
 
             n_classes = 2
             in_chans = train_set.X.shape[1]  # number of channels = 128
-            input_time_length = 500  # length of time of each epoch/trial = 4000
+            input_time_length = 100  # length of time of each epoch/trial = 4000
 
             model = ShallowFBCSPNet(in_chans=in_chans, n_classes=n_classes,
                                     input_time_length=input_time_length,
@@ -119,11 +124,12 @@ for i in subjs[:]:
                 model.cuda()
             print('cuda: ' + str(cuda) + ', num chans: ' + str(in_chans))
             optimizer = AdamW(model.parameters(), lr=0.01, weight_decay=0.1*0.001)  # weight_decay=0.1*0.001
-
+            model.network.conv_time.kernel_size = (30, 20)
+            model.network.conv_spat.kernel_size = (20, 30)
             model.compile(loss=F.nll_loss, optimizer=optimizer, iterator_seed=1, cropped=True)
             print('compiled')
 
-            num_epochs = 30
+
             model.fit(train_set.X, train_set.y, epochs=num_epochs, batch_size=64, scheduler='cosine',
                       input_time_length=input_time_length)
             print(model.epochs_df)
